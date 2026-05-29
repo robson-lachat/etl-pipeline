@@ -1,0 +1,23 @@
+# --- Segurança e Segredos ---
+.env
+
+# --- Pastas de Dados (NÃO ENVIAR PARA O GITHUB) ---
+input/*
+!input/.gitkeep
+
+out/*
+!out/.gitkeep
+
+# --- Python e Ambientes Virtuais ---
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+
+# --- Arquivos de Sistema Operacional ---
+.DS_Store
+Thumbs.db
