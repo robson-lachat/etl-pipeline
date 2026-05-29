@@ -10,7 +10,7 @@ out/*
 
 # --- Python e Ambientes Virtuais ---
 .venv/
-.vscode/
+.vscode
 __pycache__/
 *.pyc
 *.pyo
