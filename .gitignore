@@ -4,6 +4,7 @@
 # --- Pastas de Dados (NÃO ENVIAR PARA O GITHUB) ---
 input/*
 !input/.gitkeep
+!input/logo-oficial-unifap4.png
 
 out/*
 !out/.gitkeep
