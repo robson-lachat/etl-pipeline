@@ -2,16 +2,55 @@
 import pandas as pd
 import requests
 import os
+import re
 from dotenv import load_dotenv
 from fpdf import FPDF
 
 load_dotenv(override=True)
 
+# --- DICTIONARY MONTHS
+MAPA_MESES = {
+    'JANEIRO': ('01', 'JAN'),
+    'FEVEREIRO': ('02', 'FEV'),
+    'MARÇO': ('03', 'MAR'),
+    'ABRIL': ('04', 'ABR'),
+    'MAIO': ('05', 'MAI'),
+    'JUNHO': ('06', 'JUN'),
+    'JULHO': ('07', 'JUL'),
+    'AGOSTO': ('08', 'AGO'),
+    'SETEMBRO': ('09', 'SET'),
+    'OUTUBRO': ('10', 'OUT'),
+    'NOVEMBRO': ('11', 'NOV'),
+    'DEZEMBRO': ('12', 'DEZ')
+}
 
+
+# --- FUNCTION TO CLEAN THE RAW DATA AND EXTRACT THE CPFS ---
 def clean_raw_data(file_path):
     print(f"Read raw file: {file_path}")
     # Change to pd.read_excel if downloading as .xlsx
     df = pd.read_csv(file_path, header=None, dtype=str)
+
+    # =========================================================
+    # DETETIVE DO MÊS E ANO (Procura ANTES de limpar o lixo do ficheiro)
+    # =========================================================
+    periodo = {'ano_mes': '2026/01', 'abrev': 'JAN', 'ano': '2026'}
+
+    mask_folha = df[0].str.contains(
+        'FOLHA DE PAGAMENTO DE', case=False, na=False)
+    if mask_folha.any():
+        texto_folha = str(df.loc[mask_folha, 0].values[0]).upper()
+        match = re.search(
+            r'FOLHA DE PAGAMENTO DE\s+([A-ZÇ]+)\s+DE\s+(\d{4})', texto_folha)
+        if match:
+            mes_extenso = match.group(1).strip()
+            ano_valor = match.group(2)
+            numero_mes, mes_abrev = MAPA_MESES.get(
+                mes_extenso, ('00', mes_extenso[:3]))
+            periodo['ano_mes'] = f"{ano_valor}/{numero_mes}"
+            periodo['abrev'] = mes_abrev
+            periodo['ano'] = ano_valor
+    # =========================================================
 
     # Initial exploration of the raw data
     print(f"Initial rows in raw data: {len(df)}")
@@ -52,7 +91,7 @@ def clean_raw_data(file_path):
     df['cpf_limpo'] = df['cpf_limpo'].str.zfill(11)
 
     print(f"Cleaning completed! {len(df)} valid CPFs found.")
-    return df['cpf_limpo'].tolist(), df
+    return df['cpf_limpo'].tolist(), df, periodo
 
 
 def fetch_metabase_data(missing_cpfs):
@@ -323,9 +362,17 @@ class RelatorioTransparencia(FPDF):
 # --- FUNÇÃO DE TRANSFORMAÇÃO E EXPORTAÇÃO ---
 
 
-def gerar_relatorios_transparencia(df_bruto, df_metabase, out_dir):
+def gerar_relatorios_transparencia(df_bruto, df_metabase, out_dir, periodo):
     print("\n" + "="*40)
     print("CRUZANDO DADOS E GERANDO RELATÓRIOS...")
+
+    # =========================================================
+    # SEARCHING MONTH AND YEAR IN THE RAW FILENAME (for dynamic naming of output files)
+    # =========================================================
+
+    ano_mes_valor = periodo['ano_mes']
+    mes_abrev = periodo['abrev']
+    ano_valor = periodo['ano']
 
     # 1. Prepara o CPF do Metabase para o cruzamento (remove pontos e traços)
     df_metabase['cpf_limpo'] = df_metabase['cpf_formatado'].str.replace(
@@ -336,15 +383,14 @@ def gerar_relatorios_transparencia(df_bruto, df_metabase, out_dir):
 
     # 3. Montar a Tabela Final com as colunas exatas solicitadas
     df_final = pd.DataFrame()
-    df_final['Nome'] = df_cruzado['nome']  # Nome oficial que veio do Metabase
+    df_final['Nome'] = df_cruzado['nome']
     df_final['cpf'] = df_cruzado['cpf_limpo'].apply(
         lambda x: f"***.{str(x)[3:6]}.{str(x)[6:9]}-**")
     df_final['matricula'] = df_cruzado['matricula']
     df_final['curso'] = df_cruzado['curso']
     df_final['campus'] = df_cruzado['campus']
     df_final['Auxílio'] = df_cruzado['tipo_auxilio']
-    # Pode ser automatizado depois pelo nome do arquivo
-    df_final['ano_mes'] = '2026/01'
+    df_final['ano_mes'] = ano_mes_valor
 
     # IMPORTANTE: No CSV original as colunas são números [0, 1, 2, ...].
     # Vou assumir que o 'VALOR' está na coluna 6. AJUSTE O '6' ABAIXO SE FOR OUTRA COLUNA!
@@ -373,13 +419,15 @@ def gerar_relatorios_transparencia(df_bruto, df_metabase, out_dir):
     df_final['Valor R$'] = df_cruzado[nome_coluna_valor].apply(formata_moeda)
 
     # --- EXPORTAR EXCEL ---
-    caminho_xlsx = os.path.join(out_dir, 'PORTAL-TRANSPARENCIA-JAN-2026.xlsx')
+    # Ex: PORTAL-TRANSPARENCIA-FEV-2026
+    nome_ficheiro_base = f'PORTAL-TRANSPARENCIA-{mes_abrev}-{ano_valor}'
+    caminho_xlsx = os.path.join(out_dir, f'{nome_ficheiro_base}.xlsx')
     df_final.to_excel(caminho_xlsx, index=False)
 
     print(f"✅ Excel gerado: {caminho_xlsx}")
 
     # --- EXPORTAR PDF ---
-    caminho_pdf = os.path.join(out_dir, 'PORTAL-TRANSPARENCIA-JAN-2026.pdf')
+    caminho_pdf = os.path.join(out_dir, f'{nome_ficheiro_base}.pdf')
     pdf = RelatorioTransparencia(orientation='L', unit='mm', format='A4')
     pdf.add_page()
     pdf.set_font('helvetica', '', 7)
@@ -411,7 +459,7 @@ def gerar_relatorios_transparencia(df_bruto, df_metabase, out_dir):
 
 def run_pipeline():
     print("="*40)
-    print("Initializing ETL Pipeline - UNIFAP")
+    print("Initializing ETL Pipeline - UNIFAP (Múltiplos Ficheiros)")
     print("="*40)
 
     # Configure directories
@@ -423,38 +471,50 @@ def run_pipeline():
     os.makedirs(input_dir, exist_ok=True)
     os.makedirs(out_dir, exist_ok=True)
 
-    # Configure the path to the raw data file
-    # Put the Sheets spreadsheet here
-    raw_file = os.path.join(input_dir, 'PAGAMENTO - FOLHA JANEIRO26.csv')
+    # Configure the input directory with the raw files (CSV or Excel)
+    # that you want to process. You can drop multiple files here and
+    # the pipeline will process them one by one.
+    # Ex.: input/folha_fev_2026.csv, input/folha_mar_2026.csv, etc.
+    arquivos_csv = [f for f in os.listdir(
+        input_dir) if f.lower().endswith('.csv')]
 
-    # Check if the raw file exists before proceeding
-    if not os.path.exists(raw_file):
-        print(f"File not found: {raw_file}")
+    if not arquivos_csv:
+        print("Aviso: Nenhum ficheiro CSV encontrado na pasta 'input'.")
         return
 
-    # 1. Clean the data
-    list_cpfs, df_limpo = clean_raw_data(raw_file)
-    cpfs_missing = list_cpfs
+    print(
+        f"Lote encontrado: {len(arquivos_csv)} ficheiro(s) para processar.\n")
 
-    # 2. Search in Metabase
-    df_novos_alunos = fetch_metabase_data(cpfs_missing)
+    # 2. Inicia o ciclo para processar cada ficheiro um a um
+    for arquivo in arquivos_csv:
+        print("\n" + "#"*60)
+        print(f"🚀 INICIANDO PROCESSAMENTO: {arquivo}")
+        print("#"*60)
 
-    if df_novos_alunos is not None:
-        print("\nPreview finded news tudents:")
-        print(df_novos_alunos.head())  # Show 5 first lines in the terminal
+        raw_file = os.path.join(input_dir, arquivo)
 
-    # --- SALVAR NA PASTA OUT ---
-    caminho_saida = os.path.join(out_dir, 'alunos_encontrados_metabase.csv')
-    df_novos_alunos.to_csv(caminho_saida, index=False,
-                           sep=';', encoding='utf-8-sig')
+        # Limpa os dados deste ficheiro específico
+        list_cpfs, df_limpo, periodo_ficheiro = clean_raw_data(raw_file)
 
-    print(f"\n✅ Tabela salva com sucesso na pasta: {caminho_saida}")
+        # Se o ficheiro estiver vazio ou inválido, avança para o próximo
+        if not list_cpfs:
+            print(f"⚠️ O ficheiro {arquivo} não tem CPFs válidos. Saltando...")
+            continue
 
-    # Se a tabela do Metabase não estiver vazia, gera os relatórios finais!
-    if df_novos_alunos is not None and not df_novos_alunos.empty:
-        gerar_relatorios_transparencia(df_limpo, df_novos_alunos, out_dir)
-    else:
-        print("Atenção: Não há dados suficientes para gerar os relatórios finais.")
+        cpfs_missing = list_cpfs
+
+        # Busca no Metabase
+        df_novos_alunos = fetch_metabase_data(cpfs_missing)
+
+        # Se tiver sucesso, gera os relatórios
+        if df_novos_alunos is not None and not df_novos_alunos.empty:
+            gerar_relatorios_transparencia(
+                df_limpo, df_novos_alunos, out_dir, periodo_ficheiro)
+        else:
+            print(
+                f"Atenção: Não há dados no Metabase para gerar os relatórios de {arquivo}.")
+
+    print(f"✅ Processamento de {arquivo} concluído!")
 
 
 if __name__ == "__main__":
