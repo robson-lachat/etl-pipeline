@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  etl-pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Mapeamento de Volumes: Tudo que o contêiner ler/gravar nestas pastas, refletirá no seu Windows
+    volumes:
+      - ./input:/app/input
+      - ./out:/app/out
+    # Garante que o arquivo .env será lido para pegar usuário e senha do Metabase
+    env_file:
+      - .env
